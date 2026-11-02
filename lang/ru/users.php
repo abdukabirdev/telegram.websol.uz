@@ -13,7 +13,7 @@ return [
     'create_title' => 'Новый пользователь',
     'create_text' => 'Пользователь войдёт по email и паролю, которые вы зададите.',
     'edit_title' => 'Пользователь: :name',
-    'search_placeholder' => 'Имя или email',
+    'search_placeholder' => 'Имя, email или номер',
     'month_hint' => 'Рассылки, доставлено и ошибки — за последние 30 дней',
     'empty' => 'Пользователей нет',
     'you' => 'вы',

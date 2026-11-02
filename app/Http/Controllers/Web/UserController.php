@@ -11,6 +11,9 @@ use App\Models\Role;
 use App\Models\User;
 use App\Models\UserPhone;
 use App\Queries\DeliveryStats;
+use App\Queries\PhoneOwners;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -19,22 +22,22 @@ use Illuminate\View\View;
 /** Superadmin: the panel's users and their roles (superadmin, admin, user: see App\Enums\Role). */
 final class UserController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, PhoneOwners $owners): View
     {
         Gate::authorize('viewAny', User::class);
-        $search = trim((string) $request->query('search'));
 
-        $users = User::query()
-            ->with('role')
-            ->withCount(['phones' => fn ($q) => $q->whereNotNull('authorized_at'), 'catalogs'])
-            ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w->where('name', 'like', "%{$search}%")->orWhere('email', 'like', "%{$search}%")))
-            ->orderBy('name')
-            ->paginate(25)
-            ->withQueryString();
+        // the first page comes with the HTML; search and paging fetch data()
+        return view('users.index', [
+            'initial' => $this->list($request),
+            'owners' => $owners->for($request->user()),
+        ]);
+    }
 
-        $month = collect(DeliveryStats::between(now()->subDays(29)->startOfDay(), now())->byUser(500))->keyBy('user_id');
+    public function data(Request $request): JsonResponse
+    {
+        Gate::authorize('viewAny', User::class);
 
-        return view('users.index', compact('users', 'search', 'month'));
+        return response()->json($this->list($request));
     }
 
     public function create(): View
@@ -49,9 +52,9 @@ final class UserController extends Controller
         Gate::authorize('create', User::class);
         $user = User::query()->create($this->attributes($request));
 
-        // "Create and connect a phone": straight into the connect wizard with the new user as the owner
+        // "Create and connect a phone": back to the list with the connect wizard open for the new user
         if ($request->input('then') === 'phone' && Gate::allows('create', [UserPhone::class, $user])) {
-            return redirect()->to(route('phones.index', ['owner' => $user->id]).'#connect')->with('success', __('users.saved'));
+            return redirect()->to(route('users.index', ['owner' => $user->id]).'#connect')->with('success', __('users.saved'));
         }
 
         return redirect()->route('users.index')->with('success', __('users.saved'));
@@ -72,12 +75,68 @@ final class UserController extends Controller
         return redirect()->route('users.index')->with('success', __('users.saved'));
     }
 
-    public function destroy(User $user): RedirectResponse
+    public function destroy(Request $request, User $user): RedirectResponse|JsonResponse
     {
         Gate::authorize('delete', $user);
         $user->delete();
 
-        return redirect()->route('users.index')->with('success', __('users.deleted'));
+        return $request->expectsJson()
+            ? response()->json(['ok' => true, 'message' => __('users.deleted')])
+            : redirect()->route('users.index')->with('success', __('users.deleted'));
+    }
+
+    /**
+     * One page of users for the list: by name or email, or by the digits of a number
+     * of an account this user oversees ("90 123" finds the owner of +99890123...).
+     *
+     * @return array{users: list<array<string, mixed>>, meta: array{current_page: int, last_page: int, total: int}}
+     */
+    private function list(Request $request): array
+    {
+        $me = $request->user();
+        $search = trim((string) $request->query('search'));
+        $digits = preg_replace('/\D+/', '', $search);
+
+        $users = User::query()
+            ->with('role')
+            ->withCount(['phones' => fn (Builder $q) => $q->connected(), 'catalogs'])
+            ->when($search !== '', fn (Builder $q) => $q->where(fn (Builder $w) => $w
+                ->where('name', 'like', "%{$search}%")
+                ->orWhere('email', 'like', "%{$search}%")
+                ->when(strlen($digits) >= 3, fn (Builder $w) => $w->orWhereHas('phones', fn (Builder $p) => $p
+                    ->where('phone', 'like', "%{$digits}%")
+                    ->tap(fn (Builder $p) => $me->limitToOverseen($p))))))
+            ->orderBy('name')
+            ->paginate(25);
+
+        $month = collect(DeliveryStats::between(now()->subDays(29)->startOfDay(), now())->byUser(500))->keyBy('user_id');
+
+        return [
+            'users' => $users->getCollection()->map(function (User $u) use ($me, $month): array {
+                $stats = $month->get($u->id) ?? ['groups' => 0, 'sent' => 0, 'failed' => 0];
+                $role = $u->roleName();
+
+                return [
+                    'id' => $u->id,
+                    'name' => $u->name,
+                    'email' => $u->email,
+                    'initials' => $u->initials,
+                    'is_me' => $u->id === $me->id,
+                    'role' => ['label' => $role->label(), 'tone' => $role->tone()],
+                    'phones' => $u->phones_count,
+                    'catalogs' => $u->catalogs_count,
+                    'groups' => $stats['groups'],
+                    'sent' => $stats['sent'],
+                    'failed' => $stats['failed'],
+                    'can' => [
+                        'update' => $me->can('update', $u),
+                        'delete' => $me->can('delete', $u),
+                        'connect' => $me->can('create', [UserPhone::class, $u]),
+                    ],
+                ];
+            })->values()->all(),
+            'meta' => ['current_page' => $users->currentPage(), 'last_page' => $users->lastPage(), 'total' => $users->total()],
+        ];
     }
 
     /** @return array<string, mixed> */

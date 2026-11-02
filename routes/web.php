@@ -84,6 +84,7 @@ Route::middleware('auth')->group(function () {
 
     // Admins and the superadmin (accounts are the only difference: User::oversees)
     Route::middleware('can:admin')->group(function () {
+        Route::get('users/data', [UserController::class, 'data'])->name('users.data');
         Route::resource('users', UserController::class)->except('show');
 
         Route::prefix('monitoring')->name('monitoring.')->group(function () {

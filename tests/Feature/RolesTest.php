@@ -130,11 +130,11 @@ class RolesTest extends TestCase
         $this->actingAs($this->admin)->get(route('phones.index'))->assertOk()
             ->assertViewHas('owners', fn ($owners) => $owners->pluck('id')->all() === [$this->admin->id, $this->plain->id]);
 
-        // the users page links straight into the wizard, only for the users the admin may connect for
-        $connect = fn (User $u) => 'href="'.route('phones.index', ['owner' => $u->id]).'#connect"';
-        $this->get(route('users.index'))->assertOk()
-            ->assertSee($connect($this->plain), false)
-            ->assertDontSee($connect($this->otherAdmin), false);
+        // the users page opens the wizard in place, only for the users the admin may connect for
+        $this->get(route('users.index'))->assertOk()->assertViewHas('owners', fn ($owners) => $owners->pluck('id')->all() === [$this->admin->id, $this->plain->id]);
+        $connect = $this->getJson(route('users.data'))->assertOk()->collect('users')->pluck('can.connect', 'id');
+        $this->assertTrue($connect[$this->plain->id]);
+        $this->assertFalse($connect[$this->otherAdmin->id]);
 
         $this->postJson(route('phones.store'), ['phone' => '+998901110000', 'user_id' => $this->plain->id])
             ->assertCreated()
@@ -154,11 +154,21 @@ class RolesTest extends TestCase
         $this->assertSame($this->otherAdmin->id, UserPhone::query()->wherePhone('+998901110004')->value('user_id'));
     }
 
+    public function test_an_admin_finds_users_by_the_numbers_they_oversee_only(): void
+    {
+        $digits = fn (UserPhone $p) => preg_replace('/\D+/', '', $p->phone);
+        $this->actingAs($this->admin);
+
+        $this->getJson(route('users.data', ['search' => $digits($this->plainPhone)]))->assertOk()->assertJsonPath('users.*.id', [$this->plain->id]);
+        // another admin's number is not theirs to see, not even through the search
+        $this->getJson(route('users.data', ['search' => $digits($this->otherAdminPhone)]))->assertOk()->assertJsonPath('meta.total', 0);
+    }
+
     public function test_create_and_connect_opens_the_wizard_for_the_new_user(): void
     {
         $this->actingAs($this->admin)
             ->post(route('users.store'), ['name' => 'Employee', 'email' => 'employee@example.com', 'password' => 'long-enough', 'role' => 'user', 'then' => 'phone'])
-            ->assertRedirect(route('phones.index', ['owner' => User::query()->where('email', 'employee@example.com')->value('id')]).'#connect');
+            ->assertRedirect(route('users.index', ['owner' => User::query()->where('email', 'employee@example.com')->value('id')]).'#connect');
 
         // a new admin is not theirs to connect for: back to the list
         $this->post(route('users.store'), ['name' => 'Boss', 'email' => 'boss@example.com', 'password' => 'long-enough', 'role' => 'admin', 'then' => 'phone'])
@@ -178,9 +188,9 @@ class RolesTest extends TestCase
         $this->actingAs($this->admin, 'sanctum')->getJson("/api/users/{$this->otherAdmin->id}")->assertForbidden();
         $this->assertTrue($this->otherAdmin->refresh()->load('role')->isAdmin());
 
-        $this->actingAs($this->admin)->get(route('users.index'))->assertOk()
-            ->assertDontSee('href="'.route('users.edit', $this->otherAdmin).'"', false)
-            ->assertSee('href="'.route('users.edit', $this->plain).'"', false);
+        $can = $this->actingAs($this->admin)->getJson(route('users.data'))->assertOk()->collect('users')->keyBy('id');
+        $this->assertFalse($can[$this->otherAdmin->id]['can']['update']);
+        $this->assertTrue($can[$this->plain->id]['can']['update']);
         $this->get(route('users.edit', $this->plain))->assertOk();
         $this->delete(route('users.destroy', $this->plain))->assertRedirect(route('users.index'));
     }

@@ -406,7 +406,8 @@ class SendsProfileUsersPagesTest extends TestCase
         $this->actingAs($admin);
 
         $this->get(route('users.index'))->assertOk()->assertSee($this->owner->email)->assertSee($admin->email);
-        $this->get(route('users.index', ['search' => $this->owner->name]))->assertOk()->assertSee($this->owner->email)->assertDontSee(route('users.edit', $admin), false);
+        $this->getJson(route('users.data', ['search' => $this->owner->name]))->assertOk()
+            ->assertJsonPath('users.*.id', [$this->owner->id])->assertJsonPath('meta.total', 1);
         $this->get(route('users.create'))->assertOk()->assertSee('name="password"', false);
         $this->get(route('users.edit', $this->owner))->assertOk()->assertSee($this->owner->email);
 
@@ -426,6 +427,19 @@ class SendsProfileUsersPagesTest extends TestCase
 
         $this->delete(route('users.destroy', $this->owner))->assertRedirect(route('users.index'))->assertSessionHas('success');
         $this->assertNull(User::query()->find($this->owner->id));
+
+        // the list deletes without leaving the page
+        $this->deleteJson(route('users.destroy', $created))->assertOk()->assertJsonPath('message', __('users.deleted'));
+        $this->assertNull(User::query()->find($created->id));
+    }
+
+    public function test_the_users_search_finds_the_owner_of_a_number(): void
+    {
+        $this->actingAs($this->superadmin());
+        $this->phoneOf($this->owner, ['phone' => '+998901234567']);
+
+        // typed any way: "90 123 45" is the digits of the number
+        $this->getJson(route('users.data', ['search' => '90 123 45']))->assertOk()->assertJsonPath('users.*.id', [$this->owner->id]);
     }
 
     public function test_the_superadmin_cannot_delete_themselves(): void
@@ -436,8 +450,9 @@ class SendsProfileUsersPagesTest extends TestCase
         $this->assertNotNull(User::query()->find($admin->id));
 
         // no delete button for them on the list
-        $this->get(route('users.index'))->assertOk()->assertDontSee('action="'.route('users.destroy', $admin).'"', false)
-            ->assertSee('action="'.route('users.destroy', $this->owner).'"', false);
+        $can = $this->getJson(route('users.data'))->assertOk()->collect('users')->pluck('can.delete', 'id');
+        $this->assertFalse($can[$admin->id]);
+        $this->assertTrue($can[$this->owner->id]);
     }
 
     public function test_a_normal_user_cannot_open_users(): void
@@ -446,6 +461,7 @@ class SendsProfileUsersPagesTest extends TestCase
         $victim = $this->user();
 
         $this->get(route('users.index'))->assertForbidden();
+        $this->getJson(route('users.data'))->assertForbidden();
         $this->get(route('users.create'))->assertForbidden();
         $this->get(route('users.edit', $victim))->assertForbidden();
         $this->post(route('users.store'), ['name' => 'X', 'email' => 'x@example.com', 'password' => 'long-enough', 'role' => 'superadmin'])->assertForbidden();

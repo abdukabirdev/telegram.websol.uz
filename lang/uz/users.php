@@ -13,7 +13,7 @@ return [
     'create_title' => 'Yangi foydalanuvchi',
     'create_text' => 'Foydalanuvchi siz bergan email va parol bilan kiradi.',
     'edit_title' => 'Foydalanuvchi: :name',
-    'search_placeholder' => 'Ism yoki email',
+    'search_placeholder' => 'Ism, email yoki raqam',
     'month_hint' => 'Yuborishlar, yetkazilgan va xatolar — oxirgi 30 kun',
     'empty' => 'Foydalanuvchilar yo‘q',
     'you' => 'siz',

@@ -3,6 +3,7 @@
  * `catalogs.js` becomes x-data="catalogsPage(...)", `send-show.js` becomes
  * "sendShowPage", and so on. Adding a page = adding a file.
  */
+import { connectWizard } from '../lib/connect-wizard';
 import { http } from '../lib/http';
 import { poll } from '../lib/poll';
 
@@ -30,6 +31,7 @@ function pulse(url) {
 
 export function registerPages(Alpine) {
     Alpine.data('pulse', pulse);
+    Alpine.data('connectWizard', connectWizard);
     for (const [file, module] of Object.entries(modules)) {
         Alpine.data(`${camel(file)}Page`, module.default);
     }
