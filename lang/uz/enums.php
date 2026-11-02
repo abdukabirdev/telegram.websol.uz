@@ -19,6 +19,13 @@ return [
         'logging_out' => 'Chiqilmoqda…',
         'logged_out' => 'Uzilgan',
     ],
+    'account_state' => [
+        'active' => 'Faol',
+        'paused' => 'Pauzada',
+        'login' => 'Ulanmoqda',
+        'problem' => 'Muammo',
+        'off' => 'Uzilgan',
+    ],
     'group_status' => [
         'pending' => 'Navbatda',
         'sending' => 'Yuborilmoqda',

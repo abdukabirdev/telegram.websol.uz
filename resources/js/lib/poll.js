@@ -5,10 +5,12 @@
  * - slows down after errors (x2 per failure, up to 60s) and recovers on success
  * - `interval` may be a function, so a page can poll fast while something runs
  *   and slowly when idle
+ * - `immediate: false` waits one interval before the first call (the page came
+ *   with its first data)
  *
  * Returns { stop(), now() }.
  */
-export function poll(task, interval) {
+export function poll(task, interval, { immediate = true } = {}) {
     let timer = null;
     let running = false;
     let stopped = false;
@@ -41,7 +43,8 @@ export function poll(task, interval) {
     const onVisibility = () => (document.hidden ? clearTimeout(timer) : tick());
     document.addEventListener('visibilitychange', onVisibility);
 
-    tick();
+    if (immediate) tick();
+    else schedule();
 
     return {
         now: tick,

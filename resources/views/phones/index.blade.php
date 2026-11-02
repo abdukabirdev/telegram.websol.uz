@@ -1,259 +1,283 @@
+@php
+    // the tabs: every group of App\Enums\AccountState, working accounts first
+    $tabs = collect(\App\Enums\AccountState::cases())
+        ->mapWithKeys(fn ($state) => [$state->value => $state->tone()])
+        ->prepend('neutral', '');
+    $seesOthers = auth()->user()->seesOthers();
+@endphp
+
 <x-layouts.app :title="__('phones.title')">
     <div x-data="phonesPage({
         urls: @js([
             'data' => route('phones.data'),
-            'store' => route('phones.store'),
-            'code' => route('phones.code', '__ID__'),
-            'password' => route('phones.password', '__ID__'),
             'relogin' => route('phones.relogin', '__ID__'),
-            'cancel' => route('phones.cancel', '__ID__'),
             'check' => route('phones.check', '__ID__'),
             'logout' => route('phones.logout', '__ID__'),
             'destroy' => route('phones.destroy', '__ID__'),
+            'send' => route('send.create'),
         ]),
-        t: @js(__('phones.js')),
-        canSeeAll: @js(auth()->user()->seesOthers()),
-        me: @js(auth()->id()),
-        owners: @js($owners),
-    })">
+        t: @js(__('phones.js') + \Illuminate\Support\Arr::only(__('phones'), ['resumes', 'limit_reached', 'me'])),
+        initial: @js($initial),
+    })" @phone-changed.window="reload()">
         <x-ui.page-header :title="__('phones.title')" :description="__('phones.description')">
             <x-slot:actions>
-                <template x-if="canSeeAll">
-                    <x-ui.button variant="secondary" icon="users" @click="toggleAll()">
-                        <span x-text="showAll ? @js(__('phones.only_mine')) : @js(__('phones.show_all'))"></span>
-                    </x-ui.button>
-                </template>
-                <x-ui.button variant="primary" icon="plus" @click="openWizard()">{{ __('phones.connect') }}</x-ui.button>
+                <x-ui.button variant="primary" icon="plus" @click="$dispatch('connect-phone')">{{ __('phones.connect') }}</x-ui.button>
             </x-slot:actions>
         </x-ui.page-header>
 
-        {{-- Search (an admin's search looks through everyone's accounts) --}}
-        <div x-show="!loading && (canSeeAll || phones.length > 3 || search)" x-cloak class="relative mb-4 sm:max-w-sm">
-            <x-ui.icon name="search" class="c-muted pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" />
-            <input type="search" x-model="search" @input.debounce.200ms="searchAll()" class="c-input pl-9" placeholder="{{ __('phones.search') }}"
-                   autocomplete="off" enterkeyhint="search" aria-label="{{ __('common.search') }}">
-        </div>
-
-        {{-- Loading --}}
-        <div x-show="loading" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <template x-for="i in 3"><div class="c-skeleton h-40 rounded-2xl"></div></template>
-        </div>
-
-        {{-- Empty --}}
-        <div x-show="!loading && !phones.length && !search" x-cloak class="c-surface">
-            <x-ui.empty icon="phone" :title="__('phones.empty_title')" :text="__('phones.empty_text')">
-                <x-ui.button variant="primary" icon="plus" @click="openWizard()">{{ __('phones.connect') }}</x-ui.button>
-            </x-ui.empty>
-        </div>
-        <div x-show="!loading && search && !filtered.length" x-cloak class="c-surface">
-            <x-ui.empty icon="search" :title="__('common.nothing_found')" />
-        </div>
-
-        {{-- Cards --}}
-        <template x-for="(group, gi) in [{ key: 'mine', items: mine }, { key: 'others', items: others }]" :key="group.key">
-            <section x-show="!loading && group.items.length" x-cloak class="mb-6">
-                <h2 x-show="group.key === 'others'" class="c-eyebrow mb-3">{{ __('phones.others') }}</h2>
-                <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <template x-for="phone in group.items" :key="phone.id">
-                        <article class="c-surface flex flex-col p-4">
-                            <div class="flex items-start gap-3">
-                                <div class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-brand-50 text-sm font-semibold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
-                                     x-text="(phone.name || '?').replace('@', '').slice(0, 1).toUpperCase()"></div>
-                                <div class="min-w-0 flex-1">
-                                    <div class="truncate text-sm font-semibold text-gray-950 dark:text-white" x-text="phone.name"></div>
-                                    <button type="button" class="c-muted inline-flex items-center gap-1 font-mono text-xs hover:text-gray-900 dark:hover:text-white" @click="$copy(phone.phone)">
-                                        <span x-text="phone.phone"></span><x-ui.icon name="copy" class="h-3 w-3" />
-                                    </button>
-                                    <div x-show="phone.owner && !phone.is_mine" class="c-muted truncate text-xs" x-text="'👤 ' + phone.owner?.name"></div>
-                                </div>
-                                <span class="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold" :class="$fmt.tone(phone.tone)">
-                                    <span class="c-dot h-1.5 w-1.5" :class="phone.in_flight && 'is-live'"></span>
-                                    <span x-text="phone.flood_until ? @js(__('phones.paused')) : phone.status_label"></span>
-                                </span>
-                            </div>
-
-                            {{-- Health --}}
-                            <dl class="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                                <div>
-                                    <dt class="c-muted">{{ __('phones.sent_today') }}</dt>
-                                    <dd class="mt-0.5 font-semibold tabular-nums text-gray-900 dark:text-white">
-                                        <span x-text="$fmt.number(sentToday[phone.id] ?? 0)"></span><span class="c-muted font-normal" x-show="dailyLimit" x-text="' / ' + $fmt.number(dailyLimit)"></span>
-                                    </dd>
-                                </div>
-                                <div>
-                                    <dt class="c-muted">{{ __('phones.last_sent') }}</dt>
-                                    <dd class="mt-0.5 font-medium text-gray-900 dark:text-white" x-text="$fmt.relative(phone.last_sent_at)"></dd>
-                                </div>
-                                <div>
-                                    <dt class="c-muted">{{ __('phones.checked') }}</dt>
-                                    <dd class="mt-0.5 font-medium text-gray-900 dark:text-white" x-text="$fmt.relative(phone.last_checked_at)"></dd>
-                                </div>
-                                <div x-show="phone.username">
-                                    <dt class="c-muted">Username</dt>
-                                    <dd class="mt-0.5 truncate font-medium text-gray-900 dark:text-white" x-text="'@' + phone.username"></dd>
-                                </div>
-                            </dl>
-                            <div x-show="dailyLimit" class="c-progress mt-3"><span class="bg-brand-500" :style="`width:${usage(phone)}%`"></span></div>
-
-                            <p x-show="phone.flood_until" class="mt-3 rounded-xl bg-warning-50 px-3 py-2 text-xs text-warning-800 dark:bg-warning-500/10 dark:text-warning-300">
-                                {{ __('phones.flood_until') }} <span class="font-semibold" x-text="$fmt.relative(phone.flood_until)"></span>
-                            </p>
-                            <p x-show="phone.last_error_text && !phone.flood_until" class="mt-3 rounded-xl bg-error-50 px-3 py-2 text-xs text-error-700 dark:bg-error-500/10 dark:text-error-300" x-text="phone.last_error_text"></p>
-
-                            {{-- Actions --}}
-                            <div class="mt-auto flex flex-wrap items-center gap-1.5 pt-4">
-                                <template x-if="phone.can.send">
-                                    <x-ui.button as="a" size="sm" variant="primary" icon="send" ::href="@js(route('send.create')) + '?phone=' + phone.id">{{ __('phones.send') }}</x-ui.button>
-                                </template>
-                                <template x-if="phone.awaits">
-                                    <x-ui.button size="sm" variant="primary" icon="key" @click="resume(phone)">{{ __('phones.continue_login') }}</x-ui.button>
-                                </template>
-                                <template x-if="phone.can.relogin && !phone.awaits">
-                                    <x-ui.button size="sm" variant="secondary" icon="refresh" @click="relogin(phone)">{{ __('phones.relogin') }}</x-ui.button>
-                                </template>
-                                <template x-if="phone.can.check">
-                                    <x-ui.button size="sm" variant="ghost" icon="shield" @click="check(phone)" ::disabled="busy">{{ __('phones.check') }}</x-ui.button>
-                                </template>
-                                <div class="ml-auto flex gap-1">
-                                    <template x-if="phone.can.logout">
-                                        <x-ui.button size="icon-sm" variant="danger-ghost" @click="logout(phone)" :title="__('phones.logout')"><x-ui.icon name="logout" /></x-ui.button>
-                                    </template>
-                                    <template x-if="phone.can.remove">
-                                        <x-ui.button size="icon-sm" variant="danger-ghost" @click="remove(phone)" :title="__('phones.remove')"><x-ui.icon name="trash" /></x-ui.button>
-                                    </template>
-                                </div>
-                            </div>
-                        </article>
-                    </template>
-                </div>
-            </section>
-        </template>
-
-        {{-- Connect wizard --}}
-        <x-ui.modal show="wizard" :title="__('phones.connect')" width="max-w-md">
-            {{-- Steps --}}
-            <ol class="mb-5 flex items-center gap-2 text-xs font-medium">
-                @foreach (['phone' => __('phones.step_phone'), 'code' => __('phones.step_code'), 'password' => __('phones.step_password')] as $key => $label)
-                    <li class="flex items-center gap-2" :class="['phone','code','password','done'].indexOf(step) >= {{ $loop->index }} ? 'text-gray-950 dark:text-white' : 'c-muted'">
-                        <span class="grid h-5 w-5 place-items-center rounded-full border text-[10px]"
-                              :class="['phone','code','password','done'].indexOf(step) > {{ $loop->index }} ? 'border-brand-500 bg-brand-500 text-white' : 'border-current'">{{ $loop->iteration }}</span>
-                        {{ $label }}
-                        @unless ($loop->last)<span class="c-muted">→</span>@endunless
-                    </li>
+        <section class="c-surface overflow-hidden">
+            {{-- Tabs: the groups and how many accounts each has (under the search and the owner).
+                 A phone sees all six at once (3 x 2, the count on top), wider screens one row. --}}
+            <div class="grid grid-cols-3 border-b border-[var(--line)] px-1 sm:flex sm:items-stretch sm:gap-0.5 sm:overflow-x-auto sm:px-2" style="scrollbar-width:none" role="tablist">
+                @foreach ($tabs as $value => $tone)
+                    <button type="button" role="tab" @click="setState(@js($value))" :aria-selected="filters.state === @js($value)"
+                            class="relative flex min-w-0 flex-col items-center justify-center gap-1 py-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900
+                                   aria-selected:text-gray-950 dark:text-gray-400 dark:hover:text-white dark:aria-selected:text-white
+                                   sm:h-12 sm:shrink-0 sm:flex-row sm:gap-2 sm:px-3 sm:py-0 sm:text-[13px]
+                                   after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-t after:bg-brand-500 after:opacity-0 aria-selected:after:opacity-100">
+                        @if ($value !== '')
+                            <span class="c-dot hidden h-2 w-2 sm:inline-block" :class="$fmt.dot(@js($tone))"></span>
+                        @endif
+                        <span class="max-w-full truncate">{{ __('phones.states.'.($value ?: 'all')) }}</span>
+                        <span class="order-first min-w-7 rounded-full px-1.5 text-center text-[13px] font-semibold leading-5 tabular-nums sm:order-none sm:min-w-6 sm:text-[11px]"
+                              :class="$fmt.tone(counts[@js($value ?: 'all')] && @js($value !== '' && $value !== 'off') ? @js($tone) : 'neutral')"
+                              x-text="$fmt.number(counts[@js($value ?: 'all')])"></span>
+                    </button>
                 @endforeach
-            </ol>
-
-            {{-- Connecting for someone else (an admin for an employee) --}}
-            <p x-show="step !== 'phone' && ownerId !== me" x-cloak class="c-muted mb-4 text-[13px]">
-                {{ __('phones.owner_label') }}: <span class="font-semibold text-gray-900 dark:text-white" x-text="ownerName"></span>
-            </p>
-
-            {{-- Working... --}}
-            <div x-show="account?.in_flight" class="mb-4 flex items-center gap-3 rounded-2xl bg-brand-50 px-4 py-3 text-[13px] text-brand-800 dark:bg-brand-500/10 dark:text-brand-200">
-                <span class="c-dot is-live text-brand-500"></span>
-                <span x-text="account?.status === 'requesting_code' ? @js(__('phones.requesting_code')) : @js(__('phones.verifying'))"></span>
             </div>
 
-            <p x-show="error" x-cloak class="mb-4 rounded-2xl bg-error-50 px-4 py-3 text-[13px] text-error-700 dark:bg-error-500/10 dark:text-error-300" x-text="error"></p>
-
-            {{-- 1. phone --}}
-            <form x-show="step === 'phone' && !account?.in_flight" @submit.prevent="submitPhone()" class="space-y-4">
-                @if ($owners->count() > 1)
-                    {{-- Whose account: the chosen owner, or the searchable list while picking --}}
-                    <div>
-                        <span class="c-label">{{ __('phones.owner_label') }}</span>
-                        <button type="button" x-show="!pickingOwner" @click="pickOwner()" :disabled="!!account"
-                                class="flex w-full items-center gap-3 rounded-xl border border-[var(--line)] px-3 py-2.5 text-left hover:bg-[var(--surface-2)] disabled:cursor-default">
-                            <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300" x-text="owner?.initials"></span>
-                            <span class="min-w-0 flex-1">
-                                <span class="block truncate text-[13px] font-medium text-gray-900 dark:text-white" x-text="ownerLabel(owner)"></span>
-                                <span class="c-muted block truncate text-xs" x-text="owner?.email"></span>
-                            </span>
-                            <span x-show="!account" class="shrink-0 text-xs font-medium text-brand-600 dark:text-brand-300">{{ __('phones.owner_change') }}</span>
-                        </button>
-
-                        <div x-show="pickingOwner" x-cloak>
-                            <div class="relative mb-2">
-                                <x-ui.icon name="search" class="c-muted pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" />
-                                <input type="search" x-ref="ownerSearch" x-model="ownerSearch" class="c-input pl-9" placeholder="{{ __('phones.owner_search') }}"
-                                       autocomplete="off" enterkeyhint="search" @keydown.enter.prevent="filteredOwners.length === 1 && chooseOwner(filteredOwners[0])">
-                            </div>
-                            <ul class="max-h-72 divide-y divide-[var(--line)] overflow-y-auto overscroll-contain rounded-xl border border-[var(--line)]">
-                                <template x-for="o in filteredOwners" :key="o.id">
-                                    <li>
-                                        <button type="button" @click="chooseOwner(o)" class="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-[var(--surface-2)]"
-                                                :class="o.id === ownerId && 'bg-brand-50/60 dark:bg-brand-500/10'">
-                                            <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300" x-text="o.initials"></span>
-                                            <span class="min-w-0 flex-1">
-                                                <span class="block truncate text-[13px] font-medium text-gray-900 dark:text-white" x-text="ownerLabel(o)"></span>
-                                                <span class="c-muted block truncate text-xs" x-text="o.email"></span>
-                                            </span>
-                                            <span x-show="o.phones" class="c-muted shrink-0 text-[11px] tabular-nums" x-text="t.owner_phones.replace(':n', o.phones)"></span>
-                                            <x-ui.icon name="check" x-show="o.id === ownerId" class="text-brand-600 dark:text-brand-300" />
-                                        </button>
-                                    </li>
-                                </template>
-                                <li x-show="!filteredOwners.length" class="c-muted px-3 py-6 text-center text-xs">{{ __('common.nothing_found') }}</li>
-                            </ul>
-                        </div>
-                        <p x-show="ownerId !== me && !pickingOwner" class="c-muted mt-1.5 text-xs">{{ __('phones.owner_hint') }}</p>
-                    </div>
+            {{-- Search and owner --}}
+            <div class="flex flex-col gap-2 border-b border-[var(--line)] p-3 sm:flex-row sm:items-center">
+                <label class="relative block min-w-0 flex-1 sm:max-w-md">
+                    <x-ui.icon name="search" class="c-muted pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input type="search" x-model="filters.search" @input="searchChanged()" @keydown.enter.prevent="apply(); $el.blur()" data-page-search
+                           class="c-input pl-9 pr-10" placeholder="{{ __('phones.search') }}" autocomplete="off" enterkeyhint="search" aria-label="{{ __('common.search') }}">
+                    <span x-show="loading" x-cloak class="c-dot is-live absolute right-3.5 top-1/2 -translate-y-1/2 text-brand-500"></span>
+                    <button type="button" x-show="filters.search && !loading" x-cloak @click="filters.search = ''; apply()" aria-label="{{ __('common.reset') }}"
+                            class="c-muted absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg hover:text-gray-900 dark:hover:text-white">
+                        <x-ui.icon name="x" class="h-3.5 w-3.5" />
+                    </button>
+                </label>
+                @if ($owners->isNotEmpty())
+                    <select class="c-input sm:w-64" x-model="filters.user" @change="apply()" aria-label="{{ __('phones.col_owner') }}">
+                        <option value="">{{ __('phones.all_owners') }}</option>
+                        @foreach ($owners as $owner)
+                            <option value="{{ $owner['id'] }}">{{ $owner['id'] === auth()->id() ? __('phones.js.owner_me', ['name' => $owner['name']]) : $owner['name'] }}</option>
+                        @endforeach
+                    </select>
                 @endif
-                <div x-show="!pickingOwner" class="space-y-4">
-                    <x-ui.field :label="__('phones.phone_label')" :hint="__('phones.phone_hint')">
-                        <input x-ref="phoneInput" x-model="phoneInput" type="tel" inputmode="tel" autocomplete="off" enterkeyhint="send" class="c-input font-mono" placeholder="+998 90 123 45 67" required>
-                    </x-ui.field>
-                    <x-ui.button type="submit" variant="primary" class="w-full" ::disabled="busy || pickingOwner || phoneInput.length < 9">{{ __('phones.get_code') }}</x-ui.button>
-                </div>
-            </form>
-
-            {{-- 2. code --}}
-            <form x-show="step === 'code' && !account?.in_flight" x-cloak @submit.prevent="submitCode()" class="space-y-4">
-                <p class="c-muted text-[13px]">{!! __('phones.code_sent_to', ['phone' => '<span class="font-mono font-semibold text-gray-900 dark:text-white" x-text="account?.phone"></span>']) !!}</p>
-                <p x-show="ownerId !== me" class="rounded-xl bg-warning-50 px-3 py-2 text-xs text-warning-800 dark:bg-warning-500/10 dark:text-warning-300">{{ __('phones.code_from_owner') }}</p>
-                <x-ui.field :label="__('phones.code_label')">
-                    <input x-ref="codeInput" x-model="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="12"
-                           class="c-input h-12 text-center font-mono text-2xl tracking-[0.5em]" placeholder="•••••" required>
-                </x-ui.field>
-                <x-ui.button type="submit" variant="primary" class="w-full" ::disabled="busy || code.length < 3">{{ __('phones.confirm') }}</x-ui.button>
-                <button type="button" class="c-muted w-full text-center text-xs hover:text-gray-900 disabled:opacity-60 dark:hover:text-white" :disabled="resendIn > 0" @click="resend()">
-                    <span x-show="resendIn > 0" x-text="@js(__('phones.resend_in')).replace(':time', $fmt.clock(resendIn))"></span>
-                    <span x-show="resendIn === 0">{{ __('phones.resend') }}</span>
+                <button type="button" x-show="filtered" x-cloak @click="reset()"
+                        class="c-muted inline-flex shrink-0 items-center gap-1 self-start text-xs hover:text-gray-900 sm:ml-auto sm:self-auto dark:hover:text-white">
+                    <x-ui.icon name="x" class="h-3.5 w-3.5" /> {{ __('phones.reset_filters') }}
                 </button>
-            </form>
-
-            {{-- 3. password --}}
-            <form x-show="step === 'password' && !account?.in_flight" x-cloak @submit.prevent="submitPassword()" class="space-y-4">
-                <p class="c-muted text-[13px]">{{ __('phones.password_text') }}</p>
-                <x-ui.field :label="__('phones.password_label')">
-                    <input x-ref="passwordInput" x-model="password" type="password" autocomplete="off" class="c-input" required>
-                </x-ui.field>
-                <p x-show="account?.password_hint" class="c-muted text-xs">{{ __('phones.hint') }}: <span class="font-semibold" x-text="account?.password_hint"></span></p>
-                <x-ui.button type="submit" variant="primary" class="w-full" ::disabled="busy || !password">{{ __('phones.confirm') }}</x-ui.button>
-            </form>
-
-            {{-- done --}}
-            <div x-show="step === 'done'" x-cloak class="py-4 text-center">
-                <div class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-success-50 text-success-600 dark:bg-success-500/15">
-                    <x-ui.icon name="check" class="h-6 w-6" />
-                </div>
-                <p class="text-base font-semibold text-gray-950 dark:text-white">{{ __('phones.connected') }}</p>
-                <p class="c-muted mt-1 text-[13px]" x-text="account?.name + ' · ' + account?.phone"></p>
-                <div class="mt-5 flex flex-col-reverse justify-center gap-2 sm:flex-row">
-                    <x-ui.button variant="secondary" @click="wizard = false">{{ __('common.close') }}</x-ui.button>
-                    <template x-if="ownerId === me">
-                        <x-ui.button as="a" variant="primary" icon="send" ::href="@js(route('send.create')) + '?phone=' + account?.id">{{ __('phones.send') }}</x-ui.button>
-                    </template>
-                    {{-- an admin connecting employees goes on to the next one --}}
-                    <template x-if="ownerId !== me">
-                        <x-ui.button variant="primary" icon="plus" @click="openWizard()">{{ __('phones.connect_another') }}</x-ui.button>
-                    </template>
-                </div>
             </div>
+
+            {{-- Empty: no account at all, or none under the filters --}}
+            <div x-show="!phones.length && !loading" x-cloak>
+                <template x-if="!counts.all && !filters.search && !filters.user">
+                    <x-ui.empty icon="phone" :title="__('phones.empty_title')" :text="__('phones.empty_text')">
+                        <x-ui.button variant="primary" icon="plus" @click="$dispatch('connect-phone')">{{ __('phones.connect') }}</x-ui.button>
+                    </x-ui.empty>
+                </template>
+                <template x-if="counts.all || filters.search || filters.user">
+                    <x-ui.empty icon="filter" :title="__('phones.empty_filtered')" :text="__('phones.empty_filtered_text')">
+                        <x-ui.button variant="secondary" icon="x" @click="reset()">{{ __('phones.reset_filters') }}</x-ui.button>
+                    </x-ui.empty>
+                </template>
+            </div>
+
+            {{-- Wider screens: a table; the coloured edge of a row is its state --}}
+            <div x-show="phones.length" class="hidden overflow-x-auto transition-opacity md:block" :class="loading && 'opacity-60'">
+                <table class="c-table {{ $seesOthers ? 'min-w-[900px]' : 'min-w-[760px]' }}">
+                    <thead>
+                        <tr>
+                            <th class="w-52">{{ __('phones.col_status') }}</th>
+                            <th>{{ __('phones.col_account') }}</th>
+                            @if ($seesOthers)
+                                <th class="w-44">{{ __('phones.col_owner') }}</th>
+                            @endif
+                            <th class="w-40">{{ __('phones.col_today') }}</th>
+                            <th class="w-40">{{ __('phones.col_last_sent') }}</th>
+                            <th class="w-48"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="p in phones" :key="p.id">
+                            <tr class="cursor-pointer" @click="open(p)">
+                                <td>
+                                    <span class="absolute inset-y-0 left-0 w-[3px] bg-current" :class="$fmt.dot(p.state_tone)"></span>
+                                    <div :class="p.state === 'off' && 'opacity-60'">
+                                        @include('phones.state-badge', ['of' => 'p'])
+                                        <div x-show="note(p)" class="mt-1 max-w-[13rem] truncate text-[11px]" :class="noteTone(p)" :title="note(p)" x-text="note(p)"></div>
+                                    </div>
+                                </td>
+                                <td class="max-w-0" :class="p.state === 'off' && 'opacity-60'">
+                                    <div class="font-mono text-[13px] font-semibold tabular-nums text-gray-950 dark:text-white" x-text="p.phone"></div>
+                                    <div class="c-muted truncate text-xs" x-text="subtitle(p)"></div>
+                                </td>
+                                @if ($seesOthers)
+                                    <td class="max-w-0" :class="p.state === 'off' && 'opacity-60'">
+                                        <span class="block truncate text-[13px]" :class="p.is_mine ? 'c-muted' : 'text-gray-900 dark:text-gray-100'" x-text="ownerName(p)"></span>
+                                    </td>
+                                @endif
+                                <td :class="p.state === 'off' && 'opacity-60'">
+                                    <div x-show="working(p) || p.sent_today">
+                                        <div class="text-xs tabular-nums">
+                                            <span class="font-semibold text-gray-900 dark:text-white" x-text="$fmt.number(p.sent_today)"></span>
+                                            <span x-show="dailyLimit" class="c-muted" x-text="'/ ' + $fmt.number(dailyLimit)"></span>
+                                        </div>
+                                        <div x-show="dailyLimit" class="c-progress mt-1.5 w-28"><span :class="usageBar(p)" :style="`width:${usage(p)}%`"></span></div>
+                                    </div>
+                                    <span x-show="!working(p) && !p.sent_today" class="c-muted text-xs">—</span>
+                                </td>
+                                <td :class="p.state === 'off' && 'opacity-60'">
+                                    <div class="text-xs text-gray-900 dark:text-white" x-text="$fmt.relative(p.last_sent_at)" :title="p.last_sent_at ? $fmt.dateTime(p.last_sent_at) : ''"></div>
+                                </td>
+                                <td>
+                                    <div class="flex items-center justify-end gap-1" @click.stop>
+                                        <template x-if="p.can.send">
+                                            <x-ui.button as="a" ::href="sendUrl(p)" size="sm" variant="secondary" icon="send">{{ __('phones.send') }}</x-ui.button>
+                                        </template>
+                                        <template x-if="p.awaits">
+                                            <x-ui.button size="sm" variant="primary" icon="key" @click="continueLogin(p)">
+                                                <span x-text="p.awaits === 'code' ? @js(__('phones.enter_code')) : @js(__('phones.enter_password'))"></span>
+                                            </x-ui.button>
+                                        </template>
+                                        <template x-if="p.state === 'problem' && p.can.relogin">
+                                            <x-ui.button size="sm" variant="secondary" icon="refresh" @click="relogin(p)" ::disabled="busy">{{ __('phones.relogin') }}</x-ui.button>
+                                        </template>
+                                        <x-ui.button size="icon-sm" variant="ghost" @click="open(p)" :title="__('common.details')" :aria-label="__('common.details')">
+                                            <x-ui.icon name="chevron-right" />
+                                        </x-ui.button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            {{-- Phone: one row per account, a tap opens it --}}
+            <ul x-show="phones.length" class="divide-y divide-[var(--line)] transition-opacity md:hidden" :class="loading && 'opacity-60'">
+                <template x-for="p in phones" :key="p.id">
+                    <li class="relative">
+                        <span class="absolute inset-y-0 left-0 w-[3px] bg-current" :class="$fmt.dot(p.state_tone)"></span>
+                        <div role="button" tabindex="0" class="block py-3 pl-4 pr-3 active:bg-[var(--surface-2)]" :class="p.state === 'off' && 'opacity-60'"
+                             @click="open(p)" @keydown.enter="open(p)">
+                            <div class="flex items-center gap-2">
+                                <span class="min-w-0 truncate font-mono text-[15px] font-semibold tabular-nums text-gray-950 dark:text-white" x-text="p.phone"></span>
+                                <span class="ml-auto"></span>
+                                @include('phones.state-badge', ['of' => 'p'])
+                            </div>
+                            <div class="c-muted mt-0.5 truncate text-xs" x-text="[subtitle(p), @js($seesOthers) ? ownerName(p) : ''].filter(Boolean).join(' · ')"></div>
+                            <div x-show="working(p) || p.sent_today || p.last_sent_at" class="c-muted mt-1.5 flex items-center gap-3 text-xs tabular-nums">
+                                <span x-show="working(p) || p.sent_today" class="inline-flex items-center gap-1.5">
+                                    {{ __('phones.col_today') }}:
+                                    <span class="font-semibold text-gray-900 dark:text-white" x-text="$fmt.number(p.sent_today)"></span><span x-show="dailyLimit" x-text="'/' + $fmt.number(dailyLimit)"></span>
+                                    <span x-show="dailyLimit" class="c-progress w-12"><span :class="usageBar(p)" :style="`width:${usage(p)}%`"></span></span>
+                                </span>
+                                <span x-show="p.last_sent_at" class="ml-auto inline-flex items-center gap-1"><x-ui.icon name="send" class="h-3 w-3" /><span x-text="$fmt.relative(p.last_sent_at)"></span></span>
+                            </div>
+                            <div x-show="note(p)" class="mt-1 truncate text-xs" :class="noteTone(p)" x-text="note(p)"></div>
+                        </div>
+                        <div x-show="p.awaits" class="-mt-1 px-4 pb-3">
+                            <x-ui.button size="sm" variant="primary" icon="key" class="w-full" @click="continueLogin(p)">
+                                <span x-text="p.awaits === 'code' ? @js(__('phones.enter_code')) : @js(__('phones.enter_password'))"></span>
+                            </x-ui.button>
+                        </div>
+                    </li>
+                </template>
+            </ul>
+
+            <x-ui.pager />
+        </section>
+
+        {{-- One account: everything about it and every action --}}
+        <x-ui.modal show="sheet" :title="__('phones.col_account')" width="max-w-md">
+            <template x-if="current">
+                <div>
+                    <div class="flex items-start gap-3">
+                        <div class="min-w-0 flex-1">
+                            <button type="button" class="inline-flex max-w-full items-center gap-1.5 font-mono text-lg font-semibold tabular-nums text-gray-950 hover:text-brand-700 dark:text-white dark:hover:text-brand-300"
+                                    @click="$copy(current.phone)">
+                                <span class="truncate" x-text="current.phone"></span><x-ui.icon name="copy" class="c-muted h-3.5 w-3.5 shrink-0" />
+                            </button>
+                            <div class="c-muted truncate text-[13px]" x-text="subtitle(current) || '—'"></div>
+                        </div>
+                        @include('phones.state-badge', ['of' => 'current'])
+                    </div>
+
+                    <p x-show="current.state === 'paused'" class="mt-4 rounded-xl bg-warning-50 px-3 py-2 text-[13px] text-warning-800 dark:bg-warning-500/10 dark:text-warning-300">
+                        {{ __('phones.flood_until') }} <span class="font-semibold" x-text="$fmt.relative(current.flood_until)"></span>
+                    </p>
+                    <p x-show="current.state === 'active' && limitReached(current)" class="mt-4 rounded-xl bg-error-50 px-3 py-2 text-[13px] text-error-700 dark:bg-error-500/10 dark:text-error-300">
+                        {{ __('phones.limit_reached') }}
+                    </p>
+                    <div x-show="current.last_error_text && current.state !== 'active' && current.state !== 'paused'"
+                         class="mt-4 rounded-xl bg-error-50 px-3 py-2 text-[13px] text-error-700 dark:bg-error-500/10 dark:text-error-300">
+                        <div class="text-[11px] font-semibold uppercase tracking-wide opacity-80">{{ __('phones.last_error') }}</div>
+                        <div class="c-break" x-text="current.last_error_text"></div>
+                    </div>
+
+                    <dl class="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-[var(--line)] pt-4 text-[13px]">
+                        @if ($seesOthers)
+                            <div class="col-span-2">
+                                <dt class="c-muted text-xs">{{ __('phones.owner_label') }}</dt>
+                                <dd class="mt-0.5 font-medium text-gray-900 dark:text-white" x-text="current.owner?.name ?? '—'"></dd>
+                            </div>
+                        @endif
+                        <div>
+                            <dt class="c-muted text-xs">{{ __('phones.sent_today') }}</dt>
+                            <dd class="mt-0.5 font-semibold tabular-nums text-gray-900 dark:text-white">
+                                <span x-text="$fmt.number(current.sent_today ?? 0)"></span><span x-show="dailyLimit" class="c-muted font-normal" x-text="' / ' + $fmt.number(dailyLimit)"></span>
+                            </dd>
+                            <div x-show="dailyLimit" class="c-progress mt-1.5"><span :class="usageBar(current)" :style="`width:${usage(current)}%`"></span></div>
+                        </div>
+                        <div>
+                            <dt class="c-muted text-xs">{{ __('phones.last_sent') }}</dt>
+                            <dd class="mt-0.5 font-medium text-gray-900 dark:text-white" x-text="$fmt.relative(current.last_sent_at)" :title="current.last_sent_at ? $fmt.dateTime(current.last_sent_at) : ''"></dd>
+                        </div>
+                        <div>
+                            <dt class="c-muted text-xs">{{ __('phones.checked') }}</dt>
+                            <dd class="mt-0.5 font-medium text-gray-900 dark:text-white" x-text="$fmt.relative(current.last_checked_at)" :title="current.last_checked_at ? $fmt.dateTime(current.last_checked_at) : ''"></dd>
+                        </div>
+                        <div>
+                            <dt class="c-muted text-xs">{{ __('phones.authorized_at') }}</dt>
+                            <dd class="mt-0.5 font-medium tabular-nums text-gray-900 dark:text-white" x-text="$fmt.dateTime(current.authorized_at)"></dd>
+                        </div>
+                        <div x-show="current.telegram_user_id" class="col-span-2">
+                            <dt class="c-muted text-xs">{{ __('phones.telegram_id') }}</dt>
+                            <dd class="mt-0.5 font-mono text-xs text-gray-900 dark:text-white" x-text="current.telegram_user_id"></dd>
+                        </div>
+                    </dl>
+                </div>
+            </template>
 
             <x-slot:footer>
-                <x-ui.button variant="ghost" x-show="step !== 'done'" @click="cancelWizard()">{{ __('phones.cancel_login') }}</x-ui.button>
+                {{-- on a phone the column is reversed: the main action on top, removal at the bottom --}}
+                <div class="flex flex-col-reverse gap-2 sm:mr-auto sm:flex-row">
+                    <template x-if="current?.can.remove">
+                        <x-ui.button variant="danger-ghost" icon="trash" @click="remove(current)" ::disabled="busy">{{ __('phones.remove') }}</x-ui.button>
+                    </template>
+                    <template x-if="current?.can.logout">
+                        <x-ui.button variant="danger-ghost" icon="logout" @click="logout(current)" ::disabled="busy">{{ __('phones.logout') }}</x-ui.button>
+                    </template>
+                </div>
+                <template x-if="current?.can.check">
+                    <x-ui.button variant="secondary" icon="shield" @click="check(current)" ::disabled="busy">{{ __('phones.check') }}</x-ui.button>
+                </template>
+                <template x-if="current?.can.relogin && !current?.awaits">
+                    <x-ui.button variant="secondary" icon="refresh" @click="relogin(current)" ::disabled="busy">{{ __('phones.relogin') }}</x-ui.button>
+                </template>
+                <template x-if="current?.awaits">
+                    <x-ui.button variant="primary" icon="key" @click="continueLogin(current)">{{ __('phones.continue_login') }}</x-ui.button>
+                </template>
+                <template x-if="current?.can.send">
+                    <x-ui.button as="a" ::href="sendUrl(current)" variant="primary" icon="send">{{ __('phones.send') }}</x-ui.button>
+                </template>
             </x-slot:footer>
         </x-ui.modal>
+
+        @include('phones.connect-wizard')
     </div>
 </x-layouts.app>

@@ -1,281 +1,214 @@
-import { http, HttpError } from '../lib/http';
+import { http } from '../lib/http';
 import { poll } from '../lib/poll';
 
-/**
- * Telegram accounts page and the connect wizard.
- *
- * The wizard follows the account row's status (see App\Enums\AccountStatus):
- *   phone step -> requesting_code -> code step (code_sent / code_invalid)
- *   -> verifying -> password step (need_password / password_invalid) -> authorized
- * While a step is in flight the page polls every 1.5s; otherwise every 15s.
- * An admin picks the owner on the phone step (`owners`): an employee's phone is
- * connected for them, the code comes from the employee.
- */
-export default function phonesPage({ urls, t, canSeeAll, me, owners }) {
-    return {
-        phones: [],
-        sentToday: {},
-        dailyLimit: 0,
-        loading: true,
-        showAll: false,
-        canSeeAll,
-        search: '',
-        busy: false,
-        t,
+const FILTERS = ['search', 'state', 'user'];
+const NO_FILTERS = { search: '', state: '', user: '' };
 
-        // wizard
-        wizard: false,
-        step: 'phone', // phone | code | password | done
-        me,
-        ownerId: me,
-        pickingOwner: false,
-        ownerSearch: '',
-        phoneInput: '',
-        code: '',
-        password: '',
-        account: null,
-        error: null,
-        resendAt: 0,
-        now: Date.now(),
+/**
+ * Telegram accounts page: a table (rows on a phone) of the accounts this user
+ * oversees, working ones first, the coloured edge of a row telling its group
+ * (App\Enums\AccountState). Tabs by group with their counts, a search, an owner
+ * for an admin; the filters live in the address (/phones?state=active). A row
+ * opens the account's sheet with every action.
+ *
+ * The first page comes with the HTML (`initial`); then it polls every 1.5s while
+ * an account on the page is in flight, every 15s otherwise. Connecting goes
+ * through the shared wizard (resources/js/lib/connect-wizard.js), which reports
+ * changes with the 'phone-changed' event.
+ */
+export default function phonesPage({ urls, t, initial }) {
+    const url = (name, id) => urls[name].replace('__ID__', id);
+
+    return {
+        phones: initial.phones,
+        meta: initial.meta,
+        counts: initial.counts,
+        dailyLimit: initial.daily_limit,
+        filters: { ...NO_FILTERS, ...initial.filters },
+        page: initial.meta.current_page,
+        loading: false,
+        busy: false,
+        sheet: false,
+        sheetId: null,
+        seen: null, // the open account as last seen, once it is off the page
+        controller: null,
+        searchTimer: null,
 
         init() {
-            this.poller = poll(() => this.load(), () => (this.anyInFlight ? 1500 : 15000));
-            this.clock = setInterval(() => (this.now = Date.now()), 1000);
-            // #connect opens the wizard; ?owner=ID (the users page) picks whose account it is
-            if (window.location.hash === '#connect') {
-                this.openWizard(null, Number(new URLSearchParams(window.location.search).get('owner')) || null);
-                history.replaceState(null, '', window.location.pathname);
-            }
+            this.poller = poll(() => this.load(), () => (this.anyInFlight ? 1500 : 15000), { immediate: false });
         },
 
         destroy() {
             this.poller?.stop();
-            clearInterval(this.clock);
+            this.controller?.abort();
+            clearTimeout(this.searchTimer);
         },
 
         get anyInFlight() {
-            return this.phones.some((p) => p.in_flight) || (this.wizard && this.account?.in_flight);
+            return this.phones.some((p) => p.in_flight);
         },
 
-        /** By name, @username, owner, or the digits of the number ("90 123" finds +99890123...). */
         get filtered() {
-            const q = this.search.trim().toLowerCase();
-            if (!q) return this.phones;
-            const digits = q.replace(/\D+/g, '');
-
-            return this.phones.filter(
-                (p) =>
-                    `${p.name} ${p.username ?? ''} ${p.owner?.name ?? ''}`.toLowerCase().includes(q) ||
-                    (digits.length >= 2 && p.phone.replace(/\D+/g, '').includes(digits)),
-            );
+            return FILTERS.some((key) => this.filters[key] !== '');
         },
 
-        get mine() {
-            return this.filtered.filter((p) => p.is_mine);
-        },
-
-        get others() {
-            return this.filtered.filter((p) => !p.is_mine);
-        },
-
-        get owner() {
-            return owners.find((o) => o.id === this.ownerId) ?? null;
-        },
-
-        get ownerName() {
-            return this.owner?.name ?? this.account?.owner?.name ?? '';
-        },
-
-        get filteredOwners() {
-            const q = this.ownerSearch.trim().toLowerCase();
-
-            return q ? owners.filter((o) => `${o.name} ${o.email}`.toLowerCase().includes(q)) : owners;
-        },
-
-        ownerLabel(owner) {
-            if (!owner) return '';
-            return owner.id === me ? t.owner_me.replace(':name', owner.name) : owner.name;
-        },
-
-        get resendIn() {
-            return Math.max(0, Math.ceil((this.resendAt - this.now) / 1000));
+        /** The account of the open sheet, fresh from the last load. */
+        get current() {
+            return this.phones.find((p) => p.id === this.sheetId) ?? this.seen;
         },
 
         async load() {
-            const data = await http.get(urls.data, { all: this.showAll ? 1 : null });
+            this.controller?.abort();
+            const controller = (this.controller = new AbortController());
+            const data = await http.get(urls.data, { ...this.filters, page: this.page }, { signal: controller.signal });
+
             this.phones = data.phones;
-            this.sentToday = data.sent_today;
+            this.meta = data.meta;
+            this.counts = data.counts;
             this.dailyLimit = data.daily_limit;
             this.loading = false;
+            this.seen = this.current;
 
-            if (this.wizard && this.account) {
-                const fresh = this.phones.find((p) => p.id === this.account.id);
-                if (fresh) this.follow(fresh);
+            // the list shrank under us (filters, removals): go to the last page that exists
+            if (this.page > data.meta.last_page) {
+                this.page = data.meta.last_page;
+                this.refresh();
             }
         },
 
-        toggleAll() {
-            this.showAll = !this.showAll;
+        /** load() now, outside the poller: it aborts a tick in flight instead of being skipped by it. */
+        reload() {
+            this.load().catch((e) => {
+                if (e?.name === 'AbortError') return;
+                this.loading = false;
+                this.$store.toast.error(e.message);
+            });
+        },
+
+        /** Writes the filters into the address bar and reloads the list. */
+        refresh() {
+            const params = new URLSearchParams();
+            for (const key of FILTERS) if (this.filters[key] !== '') params.set(key, this.filters[key]);
+            if (this.page > 1) params.set('page', this.page);
+            const qs = params.toString();
+            window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+
             this.loading = true;
-            this.poller.now();
+            this.reload();
         },
 
-        /** An admin searching for an employee's number: search everyone's accounts. */
-        searchAll() {
-            if (this.canSeeAll && !this.showAll && this.search.trim()) {
-                this.showAll = true;
-                this.poller.now();
-            }
+        apply() {
+            clearTimeout(this.searchTimer);
+            this.page = 1;
+            this.refresh();
         },
 
-        // ------------------------------------------------------------- wizard
-
-        /** An admin starts by choosing the owner, unless one is given (the users page). */
-        openWizard(phone = null, ownerId = null) {
-            const preset = owners.some((o) => o.id === ownerId);
-            Object.assign(this, { wizard: true, step: 'phone', code: '', password: '', error: null, account: null, phoneInput: phone ?? '' });
-            Object.assign(this, { ownerId: preset ? ownerId : me, pickingOwner: false });
-            if (owners.length > 1 && !preset) this.pickOwner();
-            else this.$nextTick(() => this.$refs.phoneInput?.focus());
+        searchChanged() {
+            clearTimeout(this.searchTimer);
+            this.searchTimer = setTimeout(() => this.apply(), 300);
         },
 
-        pickOwner() {
-            if (this.account) return;
-            this.pickingOwner = true;
-            this.ownerSearch = '';
-            // on a phone the list stays in view; the keyboard opens only when they tap the search
-            if (!window.matchMedia('(pointer: coarse)').matches) this.$nextTick(() => this.$refs.ownerSearch?.focus());
+        setState(state) {
+            this.filters.state = state;
+            this.apply();
         },
 
-        chooseOwner(owner) {
-            this.ownerId = owner.id;
-            this.pickingOwner = false;
-            this.$nextTick(() => this.$refs.phoneInput?.focus());
+        reset() {
+            this.filters = { ...NO_FILTERS };
+            this.apply();
         },
 
-        resume(account) {
-            this.wizard = true;
-            this.account = account;
-            this.ownerId = account.owner?.id ?? me;
-            this.pickingOwner = false;
-            this.phoneInput = account.phone;
-            this.error = null;
-            this.follow(account);
+        go(page) {
+            this.page = Math.min(Math.max(1, page), this.meta.last_page);
+            this.refresh();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         },
 
-        /** Moves the wizard to the step the account's status asks for. */
-        follow(account) {
-            const before = this.account?.status;
-            this.account = account;
-
-            if (account.status === 'authorized') {
-                this.step = 'done';
-                if (before && before !== 'authorized') this.$store.toast.show(t.connected);
-            } else if (account.awaits === 'code') {
-                if (this.step !== 'code') {
-                    this.step = 'code';
-                    this.resendAt = Date.now() + 60000;
-                    this.$nextTick(() => this.$refs.codeInput?.focus());
-                }
-                this.error = account.status === 'code_invalid' ? account.last_error_text : null;
-            } else if (account.awaits === 'password') {
-                if (this.step !== 'password') {
-                    this.step = 'password';
-                    this.$nextTick(() => this.$refs.passwordInput?.focus());
-                }
-                this.error = account.status === 'password_invalid' || account.last_error ? account.last_error_text : null;
-            } else if (account.status === 'failed') {
-                this.step = 'phone';
-                this.error = account.last_error_text ?? t.failed;
-            }
-        },
-
-        async submitPhone() {
-            this.error = null;
-            const account = await this.send(() => http.post(urls.store, { phone: this.phoneInput, user_id: this.ownerId }));
-            if (account) {
-                this.account = account.data;
-                // someone else's account is listed only with "all": the wizard follows it through the list
-                if (this.ownerId !== me) this.showAll = true;
-                this.poller.now();
-            }
-        },
-
-        async submitCode() {
-            this.error = null;
-            const account = await this.send(() => http.post(urls.code.replace('__ID__', this.account.id), { code: this.code }));
-            if (account) {
-                this.account = account.data;
-                this.code = '';
-                this.poller.now();
-            }
-        },
-
-        async submitPassword() {
-            this.error = null;
-            const account = await this.send(() => http.post(urls.password.replace('__ID__', this.account.id), { password: this.password }));
-            this.password = '';
-            if (account) {
-                this.account = account.data;
-                this.poller.now();
-            }
-        },
-
-        async resend() {
-            if (this.resendIn > 0 || !this.account) return;
-            this.step = 'phone';
-            const account = await this.send(() => http.post(urls.relogin.replace('__ID__', this.account.id)));
-            if (account) {
-                this.account = account.data;
-                this.poller.now();
-            }
-        },
-
-        async cancelWizard() {
-            if (this.account && this.account.status !== 'authorized' && !this.account.in_flight) {
-                await this.send(() => http.post(urls.cancel.replace('__ID__', this.account.id)));
-            }
-            this.wizard = false;
-            this.poller.now();
-        },
-
-        /** Runs a request, puts a failure into the wizard's error line. */
-        async send(fn) {
-            this.busy = true;
-            try {
-                return await fn();
-            } catch (e) {
-                this.error = e instanceof HttpError ? (Object.values(e.errors)[0]?.[0] ?? e.message) : t.failed;
-                return null;
-            } finally {
-                this.busy = false;
-            }
+        open(phone) {
+            this.sheetId = phone.id;
+            this.seen = phone;
+            this.sheet = true;
         },
 
         // ------------------------------------------------------------ actions
 
         async check(phone) {
-            await this.$act(() => http.post(urls.check.replace('__ID__', phone.id)));
+            if (await this.$act(() => http.post(url('check', phone.id)))) this.reload();
         },
 
         async relogin(phone) {
-            const result = await this.$act(() => http.post(urls.relogin.replace('__ID__', phone.id)), { quiet: true });
-            if (result) this.resume(result.data);
+            const result = await this.$act(() => http.post(url('relogin', phone.id)), { quiet: true });
+            if (!result) return;
+            this.sheet = false;
+            this.$dispatch('connect-phone', { account: result.data });
+        },
+
+        /** A login that waits for a code or a password: back into the wizard. */
+        continueLogin(phone) {
+            this.sheet = false;
+            this.$dispatch('connect-phone', { account: phone });
         },
 
         async logout(phone) {
             const ok = await this.$store.confirm.ask({ title: t.logout_title, body: t.logout_body.replace(':phone', phone.phone), action: t.logout });
-            if (ok && (await this.$act(() => http.post(urls.logout.replace('__ID__', phone.id))))) this.poller.now();
+            if (ok && (await this.$act(() => http.post(url('logout', phone.id))))) this.reload();
         },
 
         async remove(phone) {
             const ok = await this.$store.confirm.ask({ title: t.remove_title, body: t.remove_body.replace(':phone', phone.phone), action: t.remove });
-            if (ok && (await this.$act(() => http.delete(urls.destroy.replace('__ID__', phone.id))))) this.poller.now();
+            if (!ok || !(await this.$act(() => http.delete(url('destroy', phone.id))))) return;
+            this.sheet = false;
+            this.reload();
         },
 
+        sendUrl(phone) {
+            return `${urls.send}?phone=${phone.id}`;
+        },
+
+        // ------------------------------------------------------------ display
+
+        /** The name and @username under the number, each only when it says something new. */
+        subtitle(phone) {
+            const username = phone.username ? `@${phone.username}` : '';
+            const name = phone.name !== phone.phone && phone.name !== username ? phone.name : '';
+
+            return [name, username].filter(Boolean).join(' · ');
+        },
+
+        /** Authorized: sends now or after Telegram's pause. */
+        working(phone) {
+            return phone.state === 'active' || phone.state === 'paused';
+        },
+
+        ownerName(phone) {
+            return phone.is_mine ? t.me : (phone.owner?.name ?? '');
+        },
+
+        /** Today's sends against the daily limit, 0..100. */
         usage(phone) {
-            const sent = this.sentToday[phone.id] ?? 0;
-            return this.dailyLimit ? Math.min(100, Math.round((sent / this.dailyLimit) * 100)) : 0;
+            return this.dailyLimit ? Math.min(100, Math.round(((phone.sent_today ?? 0) / this.dailyLimit) * 100)) : 0;
+        },
+
+        usageBar(phone) {
+            const usage = this.usage(phone);
+            return usage >= 100 ? 'bg-error-500' : usage >= 85 ? 'bg-warning-500' : 'bg-brand-500';
+        },
+
+        limitReached(phone) {
+            return this.dailyLimit > 0 && (phone.sent_today ?? 0) >= this.dailyLimit;
+        },
+
+        /** One line under the state: why the account is not sending, if it is not. */
+        note(phone) {
+            if (phone.state === 'paused') return t.resumes.replace(':time', this.$fmt.relative(phone.flood_until));
+            if (phone.state === 'active') return this.limitReached(phone) ? t.limit_reached : '';
+            if (phone.state === 'off') return '';
+
+            return phone.last_error_text ?? '';
+        },
+
+        noteTone(phone) {
+            return phone.state === 'paused' ? 'text-warning-700 dark:text-warning-300' : 'text-error-600 dark:text-error-400';
         },
     };
 }

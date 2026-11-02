@@ -6,7 +6,6 @@ namespace App\Sending;
 
 use App\Enums\MessageStatus;
 use App\Enums\TaskStatus;
-use App\Models\MessageGroup;
 use App\Models\MessageTask;
 use App\Models\TelegramMessage;
 use App\Settings\Settings;
@@ -23,21 +22,45 @@ final class DailyLimit
 
     public function sentToday(int $phoneId): int
     {
+        return $this->sentTodayMany([$phoneId])[$phoneId];
+    }
+
+    /**
+     * sentToday() of several accounts in two queries (a list page).
+     *
+     * @param  list<int>  $phoneIds
+     * @return array<int, int> account id => sent today
+     */
+    public function sentTodayMany(array $phoneIds): array
+    {
+        $counts = array_fill_keys($phoneIds, 0);
+        if ($phoneIds === []) {
+            return $counts;
+        }
         $since = now()->startOfDay();
 
-        $messages = TelegramMessage::query()
-            ->where('status', MessageStatus::Sent)
-            ->where('sent_at', '>=', $since)
-            ->whereIn('message_group_id', MessageGroup::query()->select('id')->where('user_phone_id', $phoneId))
-            ->count();
+        $messages = TelegramMessage::query()->toBase()
+            ->join('message_groups', 'message_groups.id', '=', 'telegram_messages.message_group_id')
+            ->whereIn('message_groups.user_phone_id', $phoneIds)
+            ->where('telegram_messages.status', MessageStatus::Sent->value)
+            ->where('telegram_messages.sent_at', '>=', $since)
+            ->groupBy('message_groups.user_phone_id')
+            ->selectRaw('message_groups.user_phone_id as phone_id, count(*) as n')
+            ->get();
 
-        $tasks = MessageTask::query()
-            ->where('sender_phone_id', $phoneId)
-            ->where('status', TaskStatus::Sent)
+        $tasks = MessageTask::query()->toBase()
+            ->whereIn('sender_phone_id', $phoneIds)
+            ->where('status', TaskStatus::Sent->value)
             ->where('sent_at', '>=', $since)
-            ->count();
+            ->groupBy('sender_phone_id')
+            ->selectRaw('sender_phone_id as phone_id, count(*) as n')
+            ->get();
 
-        return $messages + $tasks;
+        foreach ($messages->concat($tasks) as $row) {
+            $counts[(int) $row->phone_id] += (int) $row->n;
+        }
+
+        return $counts;
     }
 
     public function reached(int $phoneId): bool

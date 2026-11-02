@@ -10,9 +10,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\PhoneResource;
 use App\Models\User;
 use App\Models\UserPhone;
+use App\Queries\PhoneList;
+use App\Queries\PhoneOwners;
 use App\Sending\DailyLimit;
 use App\Telegram\Phone;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -31,37 +32,18 @@ final class PhoneController extends Controller
         private readonly AccountSessions $sessions,
     ) {}
 
-    public function index(Request $request): View
+    public function index(Request $request, PhoneOwners $owners, PhoneList $list, DailyLimit $limit): View
     {
-        $user = $request->user();
-        // whom an admin can connect a phone for (the wizard's owner picker): themselves first
-        $owners = $user->seesOthers()
-            ? User::query()->tap(fn (Builder $q) => $user->limitToOverseen($q, 'id'))
-                ->withCount(['phones' => fn (Builder $q) => $q->connected()])
-                ->orderByRaw('id = ? desc', [$user->id])->orderBy('name')
-                ->get(['id', 'name', 'email'])
-                ->map(fn (User $u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'initials' => $u->initials, 'phones' => $u->phones_count])
-            : collect();
-
-        return view('phones.index', ['owners' => $owners]);
+        // the first page comes with the HTML; filters, paging and polling fetch data()
+        return view('phones.index', [
+            'initial' => $this->list($request, $list, $limit),
+            'owners' => $owners->for($request->user()),
+        ]);
     }
 
-    public function data(Request $request, DailyLimit $limit): JsonResponse
+    public function data(Request $request, PhoneList $list, DailyLimit $limit): JsonResponse
     {
-        $user = $request->user();
-        $phones = UserPhone::query()
-            ->with('user:id,name')
-            ->ownedBy($user)
-            ->when(! $request->boolean('all'), fn ($q) => $q->where('user_id', $user->id))
-            ->orderByRaw('user_id = ? desc', [$user->id])
-            ->orderBy('phone')
-            ->get();
-
-        return response()->json([
-            'phones' => PhoneResource::collection($phones),
-            'sent_today' => $phones->mapWithKeys(fn (UserPhone $p) => [$p->id => $limit->sentToday($p->id)]),
-            'daily_limit' => $limit->limit(),
-        ]);
+        return response()->json($this->list($request, $list, $limit));
     }
 
     public function show(UserPhone $phone): PhoneResource
@@ -138,5 +120,34 @@ final class PhoneController extends Controller
         $this->sessions->remove($phone);
 
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * One page of the accounts this user oversees (all of them for an admin, `user`
+     * narrows to one owner), with today's sends of each and the size of every group
+     * (App\Enums\AccountState) for the page's tabs.
+     *
+     * @return array<string, mixed>
+     */
+    private function list(Request $request, PhoneList $list, DailyLimit $limit): array
+    {
+        $user = $request->user();
+        $filters = PhoneList::filters($request);
+        $phones = $list->page($user, $filters, $request->integer('page', 1));
+        $sent = $limit->sentTodayMany($phones->getCollection()->modelKeys());
+
+        return [
+            'phones' => $phones->getCollection()
+                ->map(fn (UserPhone $p): array => (new PhoneResource($p))->resolve($request) + ['sent_today' => $sent[$p->id] ?? 0])
+                ->all(),
+            'meta' => ['current_page' => $phones->currentPage(), 'last_page' => $phones->lastPage(), 'total' => $phones->total()],
+            'counts' => $list->counts($user, $filters),
+            'daily_limit' => $limit->limit(),
+            'filters' => [
+                'search' => $filters['search'],
+                'state' => $filters['state']?->value ?? '',
+                'user' => $filters['user'] !== null ? (string) $filters['user'] : '',
+            ],
+        ];
     }
 }

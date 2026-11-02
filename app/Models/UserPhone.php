@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\AccountState;
 use App\Enums\AccountStatus;
 use App\Models\Casts\LenientEnum;
 use App\Telegram\Phone;
@@ -67,6 +68,26 @@ class UserPhone extends Model
     public function scopeConnected(Builder $query): void
     {
         $query->whereNotNull('authorized_at');
+    }
+
+    /** The accounts of one group of the accounts page (see App\Enums\AccountState). */
+    public function scopeInState(Builder $query, AccountState $state): void
+    {
+        $values = fn (AccountState ...$states): array => array_map(
+            fn (AccountStatus $status): string => $status->value,
+            array_merge(...array_map(fn (AccountState $s): array => $s->statuses(), $states)),
+        );
+
+        match ($state) {
+            AccountState::Active => $query->where('status', AccountStatus::Authorized)
+                ->where(fn (Builder $q) => $q->whereNull('flood_until')->orWhere('flood_until', '<=', now())),
+            AccountState::Paused => $query->where('status', AccountStatus::Authorized)->where('flood_until', '>', now()),
+            AccountState::Login, AccountState::Off => $query->whereIn('status', $values($state)),
+            // whatever no other group takes, unknown statuses included (they read as "failed")
+            AccountState::Problem => $query->where(fn (Builder $q) => $q
+                ->whereNotIn('status', $values(AccountState::Active, AccountState::Login, AccountState::Off))
+                ->orWhereNull('status')),
+        };
     }
 
     /** Find by a phone typed any way: "+998 90 ...", "99890...". */

@@ -19,6 +19,13 @@ return [
         'logging_out' => 'Выход…',
         'logged_out' => 'Отключён',
     ],
+    'account_state' => [
+        'active' => 'Активен',
+        'paused' => 'На паузе',
+        'login' => 'Подключается',
+        'problem' => 'Ошибка',
+        'off' => 'Отключён',
+    ],
     'group_status' => [
         'pending' => 'В очереди',
         'sending' => 'Отправляется',
