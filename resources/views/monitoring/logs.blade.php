@@ -39,7 +39,10 @@
             </select>
         </x-ui.field>
         <x-ui.field :label="__('common.search')">
-            <input type="search" name="search" value="{{ $search }}" class="c-input" data-page-search placeholder="{{ __('monitoring.logs.search') }}">
+            {{-- the search follows the typing; after the reload the caret is back at the end --}}
+            <input type="search" name="search" value="{{ $search }}" class="c-input" data-page-search placeholder="{{ __('monitoring.logs.search') }}"
+                   autocomplete="off" enterkeyhint="search" @input.debounce.600ms="$el.form.requestSubmit()"
+                   @if (request()->has('search')) autofocus x-init="$el.setSelectionRange($el.value.length, $el.value.length)" @endif>
         </x-ui.field>
         <div class="flex items-end gap-2">
             <x-ui.button type="submit" variant="primary" icon="search">{{ __('monitoring.logs.show') }}</x-ui.button>
