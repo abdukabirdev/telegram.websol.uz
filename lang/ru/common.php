@@ -38,5 +38,11 @@ return [
         'copy_failed' => 'Не удалось скопировать',
         'network_error' => 'Нет связи с сервером',
         'request_failed' => 'Запрос не выполнен',
+        // "5 minutes ago" for a browser without the language's data (resources/js/lib/format.js)
+        'relative' => [
+            'now' => 'сейчас',
+            'ago' => ['second' => ':n сек. назад', 'minute' => ':n мин. назад', 'hour' => ':n ч назад', 'day' => ':n дн. назад'],
+            'in' => ['second' => 'через :n сек.', 'minute' => 'через :n мин.', 'hour' => 'через :n ч', 'day' => 'через :n дн.'],
+        ],
     ],
 ];

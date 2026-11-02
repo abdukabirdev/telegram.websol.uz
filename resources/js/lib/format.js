@@ -27,17 +27,49 @@ export function time(iso) {
     return new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(iso));
 }
 
+const relativeFormats = {};
+
+/**
+ * Intl.RelativeTimeFormat for the panel's language, or null when the browser has no
+ * words for it: Chrome ships no Uzbek data and prints "-4 min", "+13 min".
+ */
+function relativeFormat() {
+    const tag = locale();
+    if (!(tag in relativeFormats)) {
+        const rtf = new Intl.RelativeTimeFormat(tag, { numeric: 'auto' });
+        relativeFormats[tag] = /^[-+]/.test(rtf.format(-5, 'minute')) ? null : rtf;
+    }
+
+    return relativeFormats[tag];
+}
+
+/** The panel's own words (common.js.relative) for a browser without them. */
+function relativeWords(value, unit) {
+    const words = window.__t?.relative;
+    if (!words) return null;
+    if (value === 0) return words.now;
+    const pattern = (value < 0 ? words.ago : words.in)?.[unit];
+
+    return pattern ? pattern.replace(':n', number(Math.abs(value))) : null;
+}
+
+function say(value, unit) {
+    const rtf = relativeFormat();
+    if (rtf) return rtf.format(value, unit);
+
+    return relativeWords(value, unit) ?? new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' }).format(value, unit);
+}
+
 /** "3 min ago", "in 2 h". */
 export function relative(iso) {
     if (!iso) return '—';
     const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
     const abs = Math.abs(seconds);
-    const rtf = new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' });
 
-    if (abs < 45) return rtf.format(seconds, 'second');
-    if (abs < 2700) return rtf.format(Math.round(seconds / 60), 'minute');
-    if (abs < 79200) return rtf.format(Math.round(seconds / 3600), 'hour');
-    if (abs < 2592000) return rtf.format(Math.round(seconds / 86400), 'day');
+    if (abs < 45) return say(seconds, 'second');
+    if (abs < 2700) return say(Math.round(seconds / 60), 'minute');
+    if (abs < 79200) return say(Math.round(seconds / 3600), 'hour');
+    if (abs < 2592000) return say(Math.round(seconds / 86400), 'day');
 
     return dateTime(iso);
 }

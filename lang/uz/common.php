@@ -37,5 +37,11 @@ return [
         'copy_failed' => 'Nusxa olib bo‘lmadi',
         'network_error' => 'Server bilan aloqa yo‘q',
         'request_failed' => 'So‘rov bajarilmadi',
+        // "5 daqiqa oldin" for a browser without Uzbek data, Chrome (resources/js/lib/format.js)
+        'relative' => [
+            'now' => 'hozir',
+            'ago' => ['second' => ':n soniya oldin', 'minute' => ':n daqiqa oldin', 'hour' => ':n soat oldin', 'day' => ':n kun oldin'],
+            'in' => ['second' => ':n soniyadan keyin', 'minute' => ':n daqiqadan keyin', 'hour' => ':n soatdan keyin', 'day' => ':n kundan keyin'],
+        ],
     ],
 ];
