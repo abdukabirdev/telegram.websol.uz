@@ -164,8 +164,8 @@
     {{-- Confirm dialog ($store.confirm.ask) --}}
     <div x-data>
         <template x-teleport="body">
-            <div x-show="$store.confirm.open" x-cloak class="fixed inset-0 z-[70] flex items-center justify-center p-4" @keydown.escape.window="$store.confirm.answer(false)">
-                <div class="absolute inset-0 bg-gray-950/50" @click="$store.confirm.answer(false)"></div>
+            <div x-show="$store.confirm.open" x-cloak x-lock-scroll="$store.confirm.open" class="c-modal z-[70] items-center p-4" @keydown.escape.window="$store.confirm.answer(false)">
+                <div class="c-modal__backdrop" @click="$store.confirm.answer(false)"></div>
                 <div x-show="$store.confirm.open" x-transition class="relative w-full max-w-sm rounded-3xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-2xl">
                     <h2 class="text-base font-semibold text-gray-950 dark:text-white" x-text="$store.confirm.title"></h2>
                     <p class="c-muted c-break mt-2 whitespace-pre-line text-[13px]" x-show="$store.confirm.body" x-text="$store.confirm.body"></p>
@@ -184,8 +184,8 @@
     {{-- Command palette (Ctrl/⌘ K) --}}
     <div x-data>
         <template x-teleport="body">
-            <div x-show="$store.palette.open" x-cloak class="fixed inset-0 z-[65] flex items-start justify-center px-3 pt-[12vh]" @keydown.escape.window="$store.palette.open = false">
-                <div class="absolute inset-0 bg-gray-950/40" @click="$store.palette.open = false"></div>
+            <div x-show="$store.palette.open" x-cloak x-lock-scroll="$store.palette.open" class="c-modal z-[65] items-start px-3 pt-[12vh]" @keydown.escape.window="$store.palette.open = false">
+                <div class="c-modal__backdrop" @click="$store.palette.open = false"></div>
                 <div x-show="$store.palette.open" x-transition class="relative w-full max-w-xl overflow-hidden rounded-3xl border border-[var(--line-strong)] bg-[var(--surface)] shadow-2xl">
                     <div class="flex items-center gap-3 border-b border-[var(--line)] px-4">
                         <x-ui.icon name="search" class="c-muted" />
@@ -195,7 +195,7 @@
                                @keydown.enter.prevent="$store.palette.go()" @input="$store.palette.active = 0">
                         <span class="c-kbd">Esc</span>
                     </div>
-                    <div class="max-h-[50vh] overflow-y-auto py-1.5">
+                    <div class="max-h-[50dvh] overflow-y-auto overscroll-contain py-1.5">
                         <template x-for="(item, i) in $store.palette.results" :key="item.url + item.label">
                             <button type="button" class="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm"
                                     :class="i === $store.palette.active ? 'bg-gray-100 text-gray-950 dark:bg-white/[0.07] dark:text-white' : 'text-gray-700 dark:text-gray-300'"

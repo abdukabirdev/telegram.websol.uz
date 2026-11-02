@@ -585,6 +585,13 @@ html.dark {
     color: var(--color-gray-400);
   }
 
+  /* A phone browser zooms the whole page into a field with text under 16px. */
+  @media (max-width: 639.98px) {
+    .c-input {
+      font-size: 16px;
+    }
+  }
+
   .c-label {
     display: block;
     margin-bottom: 6px;
@@ -705,6 +712,70 @@ html.dark {
   .c-scroll-x {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  /*
+   * Dialogs (x-ui.modal, confirm, palette). The page behind is frozen (html.c-locked)
+   * and the overlay covers exactly the visible part of the screen (--vv-*, kept by
+   * resources/js/lib/viewport.js), so the on-screen keyboard pushes the sheet up
+   * instead of the browser scrolling the page under it. On a phone the dialog is a
+   * bottom sheet; its head and foot stay put, only the body scrolls.
+   */
+  html.c-locked,
+  html.c-locked body {
+    overflow: hidden;
+  }
+
+  .c-modal {
+    position: fixed;
+    inset-inline: 0;
+    top: var(--vv-top, 0px);
+    height: var(--vv-h, 100dvh);
+    z-index: 50;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    overscroll-behavior: contain;
+  }
+
+  .c-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgb(15 15 13 / 0.5);
+    touch-action: none;
+  }
+
+  .c-modal__panel {
+    position: relative;
+    display: flex;
+    width: 100%;
+    max-height: calc(var(--vv-h, 100dvh) - 12px);
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-bottom: 0;
+    border-radius: var(--radius-3xl) var(--radius-3xl) 0 0;
+    background: var(--surface);
+    box-shadow: var(--shadow-2xl);
+  }
+
+  .c-modal__body {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  @media (min-width: 640px) {
+    .c-modal {
+      align-items: center;
+      padding: 16px;
+    }
+
+    .c-modal__panel {
+      max-height: calc(var(--vv-h, 100dvh) - 32px);
+      border-bottom: 1px solid var(--line);
+      border-radius: var(--radius-3xl);
+    }
   }
 }
 

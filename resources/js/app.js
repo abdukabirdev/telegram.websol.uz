@@ -3,12 +3,14 @@ import { http, HttpError } from './lib/http';
 import { poll } from './lib/poll';
 import * as format from './lib/format';
 import { registerStores } from './lib/stores';
+import { registerViewport } from './lib/viewport';
 import { registerPages } from './pages';
 
 window.Alpine = Alpine;
 window.http = http;
 
 registerStores(Alpine);
+registerViewport(Alpine);
 
 /** $fmt.number(…), $fmt.relative(…) etc. in every template. */
 Alpine.magic('fmt', () => format);

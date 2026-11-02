@@ -249,7 +249,7 @@
                     </div>
                     <div class="p-4">
                         <label for="message" class="sr-only">{{ __('send.message_label') }}</label>
-                        <textarea id="message" x-ref="message" x-model="message" rows="9" class="c-input min-h-[200px] text-[14px]"
+                        <textarea id="message" x-ref="message" x-model="message" rows="9" class="c-input min-h-[200px] text-base sm:text-[14px]"
                                   :aria-invalid="tooLong || !!fieldError('message')" placeholder="{{ __('send.message_placeholder') }}"></textarea>
                         <div class="mt-2 flex flex-wrap items-start justify-between gap-x-4 gap-y-1 text-xs">
                             <p class="c-muted">

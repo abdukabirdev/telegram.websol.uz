@@ -44,7 +44,7 @@
 
                 <x-ui.field :label="__('catalogs.field_peers')" for="peers_text" error="peers_text" :hint="__('catalogs.peers_hint')">
                     <textarea id="peers_text" name="peers_text" x-model="peersText" rows="16" spellcheck="false" autocapitalize="off" autocomplete="off"
-                              class="c-input min-h-[320px] font-mono text-[13px] leading-6" placeholder="{{ __('catalogs.peers_placeholder') }}"
+                              class="c-input min-h-[320px] font-mono text-base leading-6 sm:text-[13px]" placeholder="{{ __('catalogs.peers_placeholder') }}"
                               @error('peers_text') aria-invalid="true" @enderror>{{ old('peers_text', implode("\n", $catalog->peerList())) }}</textarea>
                 </x-ui.field>
             </div>

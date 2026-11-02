@@ -58,7 +58,7 @@
                     <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ __('monitoring.api.used_title') }}</h2>
                     <div class="relative w-48 sm:w-64">
                         <x-ui.icon name="search" class="c-muted pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" />
-                        <input type="search" x-model="q" data-page-search class="c-input h-8 pl-8 text-[13px]" placeholder="{{ __('monitoring.api.filter') }}">
+                        <input type="search" x-model="q" data-page-search class="c-input h-8 pl-8 text-base sm:text-[13px]" placeholder="{{ __('monitoring.api.filter') }}">
                     </div>
                 </div>
                 @if ($used->isEmpty())
