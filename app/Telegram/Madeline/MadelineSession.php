@@ -117,4 +117,9 @@ final class MadelineSession implements TelegramSession
     {
         return NoticeShield::guard(fn (): string => $this->api->downloadToFile($media, $path));
     }
+
+    public function close(): void
+    {
+        NoticeShield::guard(fn () => SessionSleep::put($this->api));
+    }
 }

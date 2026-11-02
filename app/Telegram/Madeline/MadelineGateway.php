@@ -30,9 +30,10 @@ final class MadelineGateway implements TelegramGateway
             $result = $api->completePhoneLogin($code);
 
             return match ($result['_'] ?? null) {
+                // the session's worker stays up for the password step
                 'account.password' => ['password_required' => true, 'hint' => $result['hint'] ?? null, 'profile' => null],
                 'account.needSignup' => throw new RuntimeException('ACCOUNT_NOT_REGISTERED'),
-                default => ['password_required' => false, 'hint' => null, 'profile' => $this->self($api)],
+                default => ['password_required' => false, 'hint' => null, 'profile' => $this->loggedIn($api)],
             };
         });
     }
@@ -43,7 +44,7 @@ final class MadelineGateway implements TelegramGateway
             $api = $this->api($sessionPath);
             $api->complete2faLogin($password);
 
-            return $this->self($api);
+            return $this->loggedIn($api);
         });
     }
 
@@ -72,6 +73,11 @@ final class MadelineGateway implements TelegramGateway
         NoticeShield::guard(fn () => $this->api($sessionPath)->logout());
     }
 
+    public function killWorker(string $sessionPath): void
+    {
+        SessionSleep::kill($sessionPath);
+    }
+
     private function api(string $sessionPath): API
     {
         if (! $this->sessions->holdUntilExit($sessionPath)) {
@@ -96,6 +102,15 @@ final class MadelineGateway implements TelegramGateway
         if (app()->resolved('queue.worker')) {
             app('queue.worker')->shouldQuit = true;
         }
+    }
+
+    /** The login is complete: the session sleeps until a job needs it (SessionSleep). */
+    private function loggedIn(API $api): Profile
+    {
+        $profile = $this->self($api);
+        SessionSleep::put($api);
+
+        return $profile;
     }
 
     private function self(API $api): Profile

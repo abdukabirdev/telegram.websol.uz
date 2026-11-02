@@ -32,6 +32,11 @@ All Telegram calls go through `App\Telegram\Contracts\TelegramGateway` /
 - A queue worker that opened a session exits after that job (`MadelineGateway::endWorkerAfterJob`,
   supervisor starts a fresh one): a Madeline instance outlives its job, and a leftover one breaks
   the next login step or poisons the process ("The pool was shut down").
+- On Linux an existing session is held by a separate `MadelineProto worker <path>` process (IPC,
+  setsid, no idle timeout; MadelineProto 8.0 can't turn it off). It ends with the work
+  (`App\Telegram\Madeline\SessionSleep`): `TelegramSession::close()` in a `finally` of every job
+  that opens a session, and after a completed login; `SessionStore::delete()` and the run after a
+  hung one (`TelegramGateway::killWorker`) kill it by its exact session path.
 
 ## Login state machine
 

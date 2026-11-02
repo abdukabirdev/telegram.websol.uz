@@ -57,14 +57,17 @@ final class FetchChatHistory implements ShouldQueue
             return;
         }
 
+        $session = null;
         try {
-            $fetcher->fetch($telegram->open((string) $phone->session_path), $group, $phone->telegram_user_id, $this->limit);
+            $session = $telegram->open((string) $phone->session_path);
+            $fetcher->fetch($session, $group, $phone->telegram_user_id, $this->limit);
         } catch (Throwable $e) {
             $error = TelegramError::from($e);
             $error->kind === ErrorKind::DeadSession
                 ? $accounts->retire($phone->id, $error)
                 : $events->warning(EventKind::Api, 'Chat history fetch failed', ['peer' => $group->peer, 'raw' => $error->raw], $phone->id, errorKey: $error->key);
         } finally {
+            $session?->close();
             $lock->release();
             $slot->release();
         }

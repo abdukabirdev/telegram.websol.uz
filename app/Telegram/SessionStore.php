@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Telegram;
 
+use App\Telegram\Madeline\SessionSleep;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 
@@ -64,6 +65,10 @@ final class SessionStore
         if (! $this->exists($path) || ! $this->isInside($path)) {
             return;
         }
+
+        // A worker left on the session would write it back half or keep it in use; it
+        // has nothing worth saving any more.
+        SessionSleep::kill($path);
 
         File::isDirectory($path) ? File::deleteDirectory($path) : File::delete($path);
 

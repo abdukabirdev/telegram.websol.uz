@@ -40,4 +40,10 @@ interface TelegramSession
 
     /** Downloads a message's media to a file and returns the final path. */
     public function download(mixed $media, string $path): string;
+
+    /**
+     * The work with this session is done: whatever holds it in the background stops
+     * (saving it) instead of living on. Never throws; the session is not used after.
+     */
+    public function close(): void;
 }

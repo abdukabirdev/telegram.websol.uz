@@ -32,8 +32,10 @@ final class CheckAccountSession extends AccountJob
             return;
         }
 
+        $session = null;
         try {
-            $profile = $telegram->open($account->session_path)->me();
+            $session = $telegram->open($account->session_path);
+            $profile = $session->me();
         } catch (Throwable $e) {
             $error = TelegramError::from($e);
             $error->kind === ErrorKind::DeadSession
@@ -42,6 +44,7 @@ final class CheckAccountSession extends AccountJob
 
             return;
         } finally {
+            $session?->close();
             $lock->release();
         }
 

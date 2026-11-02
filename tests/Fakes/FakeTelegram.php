@@ -58,6 +58,12 @@ final class FakeTelegram implements TelegramGateway, TelegramSession
         return array_values(array_map(fn ($c) => $c[1], array_filter($this->calls, fn ($c) => $c[0] === 'sendFile')));
     }
 
+    /** How many times a method was called. */
+    public function count(string $method): int
+    {
+        return count(array_filter($this->calls, fn ($c) => $c[0] === $method));
+    }
+
     public function requestCode(string $sessionPath, string $phone): void
     {
         $this->record('requestCode', compact('sessionPath', 'phone'));
@@ -92,6 +98,11 @@ final class FakeTelegram implements TelegramGateway, TelegramSession
     public function logout(string $sessionPath): void
     {
         $this->record('logout', compact('sessionPath'));
+    }
+
+    public function killWorker(string $sessionPath): void
+    {
+        $this->record('killWorker', compact('sessionPath'));
     }
 
     public function me(): Profile
@@ -145,6 +156,11 @@ final class FakeTelegram implements TelegramGateway, TelegramSession
     public function download(mixed $media, string $path): string
     {
         return $path;
+    }
+
+    public function close(): void
+    {
+        $this->calls[] = ['close', null];
     }
 
     private function record(string $method, mixed $args): void

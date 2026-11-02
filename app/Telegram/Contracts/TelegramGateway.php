@@ -32,4 +32,10 @@ interface TelegramGateway
 
     /** Logs the session out on Telegram's side. */
     public function logout(string $sessionPath): void;
+
+    /**
+     * Kills whatever holds the session in the background without letting it save:
+     * one that hangs. The next open() starts afresh. Never throws.
+     */
+    public function killWorker(string $sessionPath): void;
 }

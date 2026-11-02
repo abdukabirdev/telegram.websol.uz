@@ -204,6 +204,8 @@ final class SendWorker
             $message->update(['status' => MessageStatus::Failed, 'error_key' => 'worker_timeout', 'claimed_at' => null, 'attempts' => $message->attempts + 1]);
             $this->progress->refresh($message->message_group_id);
         }
+        // The session's worker may be what hangs: kill it, so this run opens a fresh one.
+        $this->telegram->killWorker((string) UserPhone::query()->whereKey($accountId)->value('session_path'));
         CheckAccountSession::dispatch($accountId);
     }
 
@@ -234,6 +236,15 @@ final class SendWorker
             return self::RETRY;
         }
 
+        try {
+            return $this->sendDue($session, $account);
+        } finally {
+            $session->close(); // the next run starts a fresh worker
+        }
+    }
+
+    private function sendDue(TelegramSession $session, UserPhone $account): int
+    {
         $perRun = (int) config('telegram.worker.messages_per_run');
         $handled = 0;
 
